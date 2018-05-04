@@ -239,8 +239,8 @@ if __name__ == '__main__':
     def parse_args():
         parser = argparse.ArgumentParser()
         parser.add_argument('--gpu', '-d', type=str, dest='gpu_ids')
-        parser.add_argument('--range', '-r', type=str, dest='test_epochs')
-        parser.add_argument('--model', '-m', type=str, dest='test_model')
+        parser.add_argument('--range', '-r', type=str, default = 0-1, dest='test_epochs')
+        parser.add_argument('--model', '-m', type=str, default = "", dest='test_model')
         args = parser.parse_args()
 
         # test gpus

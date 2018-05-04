@@ -168,64 +168,73 @@ def test_net(tester, logger, dets, det_range):
     return all_res, dump_results
 
 
+def compute_ap(score, threshold =0.5):
+    b =  [ 1 if x > threshold else 0 for x in score]
+    return np.sum(b)/1.0/len(score)
+
+
 def test(test_model, logger):
     eval_gt = COCO(cfg.gt_path)
     import json
-    with open(cfg.det_path, 'r') as f:
-        dets = json.load(f)
-
-    test_subset = False
-    if test_subset:
-        eval_gt.imgs = dict(list(eval_gt.imgs.items())[:100])
-        anns = dict()
-        for i in eval_gt.imgs:
-            for j in eval_gt.getAnnIds(i):
-                anns[j] = eval_gt.anns[j]
-        eval_gt.anns = anns
-    dets = [i for i in dets if i['image_id'] in eval_gt.imgs]
-
-    dets = [i for i in dets if i['category_id'] == 1]
-    dets.sort(key=lambda x: (x['image_id'], x['score']), reverse=True)
-    for i in dets:
-        i['imgpath'] = 'val2014/COCO_val2014_000000%06d.jpg' % i['image_id']
-    img_num = len(np.unique([i['image_id'] for i in dets]))
-
-    use_gtboxes = False
-    if use_gtboxes:
-        d = COCOJoints()
-        coco_train_data, coco_test_data = d.load_data()
-        coco_test_data.sort(key=lambda x: x['imgid'])
-        for i in coco_test_data:
-            i['image_id'] = i['imgid']
-            i['score'] = 1.
-        dets = coco_test_data
-
-    from tfflat.mp_utils import MultiProc
-    img_start = 0
-    ranges = [0]
-    images_per_gpu = int(img_num / len(args.gpu_ids.split(','))) + 1
-    for run_img in range(img_num):
-        img_end = img_start + 1
-        while img_end < len(dets) and dets[img_end]['image_id'] == dets[img_start]['image_id']:
-            img_end += 1
-        if (run_img + 1) % images_per_gpu == 0 or (run_img + 1) == img_num:
-            ranges.append(img_end)
-        img_start = img_end
-
-    def func(id):
-        cfg.set_args(args.gpu_ids.split(',')[id])
-        tester = Tester(Network(), cfg)
-        tester.load_weights(test_model)
-        range = [ranges[id], ranges[id + 1]]
-        return test_net(tester, logger, dets, range)
-
-    MultiGPUFunc = MultiProc(len(args.gpu_ids.split(',')), func)
-    all_res, dump_results = MultiGPUFunc.work()
-
-    # evaluation
     result_path = osp.join(cfg.output_dir, 'results.json')
-    with open(result_path, 'w') as f:
-        json.dump(dump_results, f)
+    if not os.path.exists(result_path):
+
+        with open(cfg.det_path, 'r') as f:
+            dets = json.load(f)
+
+        test_subset = False
+        if test_subset:
+            eval_gt.imgs = dict(list(eval_gt.imgs.items())[:100])
+            anns = dict()
+            for i in eval_gt.imgs:
+                for j in eval_gt.getAnnIds(i):
+                    anns[j] = eval_gt.anns[j]
+            eval_gt.anns = anns
+        dets = [i for i in dets if i['image_id'] in eval_gt.imgs]
+
+        dets = [i for i in dets if i['category_id'] == 1]
+        dets.sort(key=lambda x: (x['image_id'], x['score']), reverse=True)
+        for i in dets:
+            i['imgpath'] = 'val2014/COCO_val2014_000000%06d.jpg' % i['image_id']
+        img_num = len(np.unique([i['image_id'] for i in dets]))
+
+        use_gtboxes = False
+        if use_gtboxes:
+            d = COCOJoints()
+            coco_train_data, coco_test_data = d.load_data()
+            coco_test_data.sort(key=lambda x: x['imgid'])
+            for i in coco_test_data:
+                i['image_id'] = i['imgid']
+                i['score'] = 1.
+            dets = coco_test_data
+
+        from tfflat.mp_utils import MultiProc
+        img_start = 0
+        ranges = [0]
+        images_per_gpu = int(img_num / len(args.gpu_ids.split(','))) + 1
+        for run_img in range(img_num):
+            img_end = img_start + 1
+            while img_end < len(dets) and dets[img_end]['image_id'] == dets[img_start]['image_id']:
+                img_end += 1
+            if (run_img + 1) % images_per_gpu == 0 or (run_img + 1) == img_num:
+                ranges.append(img_end)
+            img_start = img_end
+
+        def func(id):
+            cfg.set_args(args.gpu_ids.split(',')[id])
+            tester = Tester(Network(), cfg)
+            tester.load_weights(test_model)
+            range = [ranges[id], ranges[id + 1]]
+            return test_net(tester, logger, dets, range)
+
+        MultiGPUFunc = MultiProc(len(args.gpu_ids.split(',')), func, dump_method=1)
+        all_res, dump_results = MultiGPUFunc.work()
+
+        # evaluation
+        with open(result_path, 'w') as f:
+            json.dump(dump_results, f)
+    else:
+        print("loading the precalcuated json files")
 
     eval_dt = eval_gt.loadRes(result_path)
     cocoEval = COCOeval(eval_gt, eval_dt, iouType='keypoints')
@@ -233,6 +242,16 @@ def test(test_model, logger):
     cocoEval.evaluate()
     cocoEval.accumulate()
     cocoEval.summarize()
+    pred = json.load(open(result_path, 'r'))
+    scores = [ x['score'] for x in pred]
+    ap50 = compute_ap(scores, 0.5)
+    print('AP50 is %f' % ap50)
+    ap = 0
+    for i in np.arange(0.5,1, 0.05).tolist():
+        ap = ap + compute_ap(scores, i)
+    ap = ap / len(np.arange(0.5, 1 , 0.05).tolist())
+    print('AP(@0.5-1)is %f' % ap)
+
 
 
 if __name__ == '__main__':

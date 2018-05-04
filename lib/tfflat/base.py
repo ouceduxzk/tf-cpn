@@ -142,6 +142,7 @@ class Base(object):
         self.summary_dict.update( get_tower_summary_dict(self.net._tower_summary) )
 
     def load_weights(self, model=None):
+        print(model)
         if model == 'last_epoch':
             sfiles = os.path.join(self.cfg.model_dump_dir, 'snapshot_*.ckpt.meta')
             sfiles = glob.glob(sfiles)
@@ -276,8 +277,8 @@ class Trainer(Base):
         train_saver = Saver(self.sess, tf.global_variables(), self.cfg.model_dump_dir)
 
         self.logger.info('Initialize all variables ...')
-        self.sess.run(tf.variables_initializer(tf.global_variables(), name='init'))
-
+        #self.sess.run(tf.variables_initializer(tf.global_variables(), name='init'))
+        self.sess.run(tf.global_variables_initializer())
         # initialize weights
         self.load_weights('last_epoch' if self.cfg.continue_train else self.cfg.init_model)
 
